@@ -105,11 +105,12 @@ export default {
 
     // 預設待辦事項
     const defaultTodos = [
-      { id: 1, text: '把冰箱裡昨天的廚餘拿去丟', completed: true },
+      { id: 1, text: '把冰箱裡昨天的廚餘拿去丟', completed: false },
       { id: 2, text: '打電話給通知爸媽下禮拜一起吃飯', completed: false },
       { id: 3, text: '幫同學組高階電腦', completed: false },
       { id: 4, text: '繳網路費、電費、水費、電信費、瓦斯費', completed: true },
       { id: 5, text: '約協志禮拜五晚上去看2266演唱會', completed: false },
+      { id: 6, text: '約Ikura禮拜六晚上去看Yowasabi演唱會', completed: false },
     ]
 
     // 從 localStorage 載入資料
