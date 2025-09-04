@@ -8,7 +8,7 @@
             ><span>{{ userName }}的代辦</span></router-link
           >
         </li>
-        <li><a href="#" @click="handleLogout">登出</a></li>
+        <li><a href="#" @click.prevent="handleLogout">登出</a></li>
       </ul>
     </nav>
     <div class="conatiner todoListPage vhContainer">
@@ -17,7 +17,7 @@
           <input
             type="text"
             placeholder="請輸入待辦事項"
-            v-model="newTodo"
+            v-model.trim="newTodo"
             @keyup.enter="addTodo"
           />
           <a href="#" @click.prevent="addTodo">
@@ -91,7 +91,7 @@
 <script>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { authAPI } from '@/services/api'
+import { authAPI, todoAPI } from '@/services/api'
 import { notification } from '@/services/notification'
 
 export default {
@@ -103,18 +103,42 @@ export default {
     const todos = ref([])
     const userName = ref('')
 
-    // 預設待辦事項
+    // 預設待辦事項 - 使用負數 ID 避免與 API ID 衝突
     const defaultTodos = [
-      { id: 1, text: '把冰箱裡昨天的廚餘拿去丟', completed: false },
-      { id: 2, text: '打電話給通知爸媽下禮拜一起吃飯', completed: false },
-      { id: 3, text: '幫同學組高階電腦', completed: false },
-      { id: 4, text: '繳網路費、電費、水費、電信費、瓦斯費', completed: true },
-      { id: 5, text: '約協志禮拜五晚上去看2266演唱會', completed: false },
-      { id: 6, text: '約Ikura禮拜六晚上去看Yowasabi演唱會', completed: false },
+      { id: -1, text: '把冰箱裡昨天的廚餘拿去丟', completed: false },
+      { id: -2, text: '打電話給通知爸媽下禮拜一起吃飯', completed: false },
+      { id: -3, text: '幫同學組高階電腦', completed: false },
+      { id: -4, text: '繳網路費、電費、水費、電信費、瓦斯費', completed: true },
+      { id: -5, text: '約協志禮拜五晚上去看2266演唱會', completed: false },
+      { id: -6, text: '約Ikura禮拜六晚上去看Yowasabi演唱會', completed: false },
     ]
 
-    // 從 localStorage 載入資料
-    onMounted(() => {
+    // 載入待辦事項資料
+    const loadTodos = async () => {
+      try {
+        const result = await todoAPI.getTodos()
+        if (result.success && result.data.length > 0) {
+          // 轉換 API 資料格式以符合本地格式
+          todos.value = result.data.map((todo) => ({
+            id: todo.id,
+            text: todo.content,
+            completed: todo.status,
+          }))
+        } else {
+          // API 沒有資料或載入失敗，使用預設資料
+          todos.value = [...defaultTodos]
+          console.log('使用預設待辦事項資料')
+        }
+      } catch (error) {
+        console.error('Load todos error:', error)
+        // 載入失敗，使用預設資料
+        todos.value = [...defaultTodos]
+        console.log('API 載入失敗，使用預設待辦事項資料')
+      }
+    }
+
+    // 從 localStorage 載入用戶資料並載入待辦事項
+    onMounted(async () => {
       const user = JSON.parse(localStorage.getItem('user') || '{}')
       if (!user.email) {
         router.push('/login')
@@ -122,60 +146,101 @@ export default {
       }
       userName.value = user.name || user.email.split('@')[0]
 
-      // 載入待辦事項，如果沒有則使用預設資料
-      const savedTodos = JSON.parse(localStorage.getItem('todos') || 'null')
-      if (savedTodos === null) {
-        // 首次使用，載入預設待辦事項
-        todos.value = [...defaultTodos]
-        saveTodos()
-      } else {
-        todos.value = savedTodos
-      }
+      // 載入待辦事項
+      await loadTodos()
     })
 
-    // 儲存待辦事項到 localStorage
-    const saveTodos = () => {
-      localStorage.setItem('todos', JSON.stringify(todos.value))
-    }
-
     // 新增待辦事項
-    const addTodo = () => {
+    const addTodo = async () => {
       if (newTodo.value.trim()) {
         const todoText = newTodo.value.trim()
-        // 確保 ID 不會與現有項目衝突
-        const maxId = todos.value.length > 0 ? Math.max(...todos.value.map((t) => t.id)) : 0
-        const todo = {
-          id: Math.max(maxId + 1, Date.now()),
-          text: todoText,
-          completed: false,
+        try {
+          const result = await todoAPI.addTodo(todoText)
+          if (result.success) {
+            // 轉換 API 資料格式以符合本地格式
+            const newTodoItem = {
+              id: result.data.newTodo.id,
+              text: result.data.newTodo.content,
+              completed: result.data.newTodo.status,
+            }
+            todos.value.push(newTodoItem)
+            newTodo.value = ''
+            notification.success(`成功將「${todoText}」加入待辦事項區域`)
+          }
+        } catch (error) {
+          console.error('Add todo error:', error)
+          notification.error('新增失敗，請稍後再試', '錯誤')
         }
-        todos.value.push(todo)
-        newTodo.value = ''
-        saveTodos()
-
-        // 顯示成功通知
-        notification.success(`成功將「${todoText}」加入待辦事項區域`)
       }
     }
 
     // 切換待辦事項狀態
-    const toggleTodo = (id) => {
+    const toggleTodo = async (id) => {
       const todo = todos.value.find((t) => t.id === id)
       if (todo) {
+        const originalState = todo.completed
+
+        // 如果是本地預設資料（負數 ID），直接更新本地狀態
+        if (id < 0) {
+          todo.completed = !todo.completed
+          // 顯示狀態切換通知
+          if (todo.completed) {
+            notification.success(`「${todo.text}」已完成！`, '任務完成')
+          } else {
+            notification.info(`「${todo.text}」已移回待完成`, '狀態更新')
+          }
+          return
+        }
+
+        // API 資料，先樂觀更新，如果失敗再回復
         todo.completed = !todo.completed
-        saveTodos()
+
+        try {
+          const result = await todoAPI.toggleTodo(id)
+          if (result.success) {
+            // API 成功，顯示狀態切換通知
+            if (todo.completed) {
+              notification.success(`「${todo.text}」已完成！`, '任務完成')
+            } else {
+              notification.info(`「${todo.text}」已移回待完成`, '狀態更新')
+            }
+          } else {
+            // API 失敗，回復原狀態
+            todo.completed = originalState
+            notification.error('更新狀態失敗，請稍後再試', '錯誤')
+          }
+        } catch (error) {
+          // API 失敗，回復原狀態
+          todo.completed = originalState
+          console.error('Toggle todo error:', error)
+          notification.error('更新狀態失敗，請稍後再試', '錯誤')
+        }
       }
     }
 
     // 刪除待辦事項
-    const deleteTodo = (id) => {
+    const deleteTodo = async (id) => {
       const todoToDelete = todos.value.find((t) => t.id === id)
       if (todoToDelete) {
-        todos.value = todos.value.filter((t) => t.id !== id)
-        saveTodos()
+        // 如果是本地預設資料（負數 ID），直接從本地移除
+        if (id < 0) {
+          todos.value = todos.value.filter((t) => t.id !== id)
+          notification.error(`已從待辦事項區域移除「${todoToDelete.text}」`, '移除成功')
+          return
+        }
 
-        // 顯示移除通知（使用錯誤樣式）
-        notification.error(`已從待辦事項區域移除「${todoToDelete.text}」`, '移除成功')
+        // API 資料，呼叫 API 刪除
+        try {
+          const result = await todoAPI.deleteTodo(id)
+          if (result.success) {
+            todos.value = todos.value.filter((t) => t.id !== id)
+            // 顯示移除通知（使用錯誤樣式）
+            notification.error(`已從待辦事項區域移除「${todoToDelete.text}」`, '移除成功')
+          }
+        } catch (error) {
+          console.error('Delete todo error:', error)
+          notification.error('刪除失敗，請稍後再試', '錯誤')
+        }
       }
     }
 
